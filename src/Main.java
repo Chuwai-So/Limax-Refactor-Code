@@ -148,75 +148,106 @@ class FarmSystem{
 /*----------------*/
 
 //Process Interface
+//Right now the business logic is a trickle down model, that once a process is fulfilled it will stop there
+//Made adjustment to business logic to align more to real life
 interface Process {
-    boolean apply(AppConfig cfg, FarmSystem sys, Request req);
+    boolean apply(AppConfig cfg, FarmSystem sys, ProcessContext ctx);
+}
+
+final class ProcessContext {
+    final Request req;
+    boolean highPriority;
+    boolean weekend;
+    boolean nonRegular;
+    boolean nonActive;
+
+    ProcessContext(Request req) {
+        this.req = req;
+    }
+
+    String articleName() {
+        String name = req.articleName();
+        if (nonRegular) name += "-NR";
+        if (highPriority) name += "-HP";
+        if (weekend) name += "-weekend";
+        return name;
+    }
+
+    String farmerName() {
+        String name = req.farmerName();
+        if (nonRegular) name += "-NR";
+        if(nonActive) name += "-NA";
+        if (weekend) name += "-weekend";
+        return name;
+    }
+
+    String date() {
+        String d = req.date();
+        if (nonRegular) d += "-NR";
+        return d;
+    }
+
+    int quantity() { return req.quantity(); }
 }
 
 //Process Implementation
 final class PermissionProcess implements Process {
-    public boolean apply(AppConfig cfg, FarmSystem sys, Request req) {
+    public boolean apply(AppConfig cfg, FarmSystem sys, ProcessContext ctx){
         return !cfg.hasSpecialPermission();
     }
 }
 
 final class NonRegularProcess implements Process {
-    public boolean apply(AppConfig cfg, FarmSystem sys, Request req) {
-        if (cfg.userType() == UserType.REGULAR) return false;
-
-        Article a = sys.addArticle(req.articleName() + "-NR");
-        sys.addFarmer(req.farmerName() + "-NR");
-        sys.addSchedule(a, req.date() + "-NR");
-
-        return true;
+    public boolean apply(AppConfig cfg, FarmSystem sys, ProcessContext ctx) {
+        if (cfg.userType() != UserType.REGULAR) {
+            ctx.nonRegular = true;
+        }
+        return false;
     }
 }
 
 final class HighPriorityProcess implements Process {
-    public boolean apply(AppConfig cfg, FarmSystem sys, Request req) {
-        if (!cfg.isHighPriority()) return false;
-
-        sys.addArticle(req.articleName() + "-HP");
-        return true;
+    public boolean apply(AppConfig cfg, FarmSystem sys, ProcessContext ctx) {
+        if (cfg.isHighPriority()) ctx.highPriority = true;
+        return false;
     }
 }
 
 final class WeekendProcess implements Process {
-    public boolean apply(AppConfig cfg, FarmSystem sys, Request req) {
-        if (!cfg.isWeekend()) return false;
-
-        sys.addArticle(req.articleName() + "-weekend");
-        sys.addFarmer(req.farmerName() + "-weekend");
-
-        return true; // STOP
+    public boolean apply(AppConfig cfg, FarmSystem sys, ProcessContext ctx) {
+    if(cfg.isWeekend()) {
+        ctx.weekend = true;
+    }
+        return false;
     }
 }
 
 //Assignment did not specify what to do if user is inactive
+//Add an - "NA" flag to farmer
 final class InactiveUserProcess implements Process {
-    public boolean apply(AppConfig cfg, FarmSystem sys, Request req) {
-        // stop if inactive, do nothing
-        return !cfg.isActiveUser();
+    public boolean apply(AppConfig cfg, FarmSystem sys, ProcessContext ctx) {
+        if(!cfg.isActiveUser()) {
+            ctx.nonActive = true;
+        }
+       return false;
     }
 }
 
 final class LocationProcess implements Process {
-    public boolean apply(AppConfig cfg, FarmSystem sys, Request req) {
+    public boolean apply(AppConfig cfg, FarmSystem sys, ProcessContext ctx) {
+        Article a = sys.addArticle(ctx.articleName());
+        String farmer = ctx.farmerName();
 
-        Article a = sys.addArticle(req.articleName());
-
-        //Did not specify to add "west" flag if location is set to west
         if (cfg.location() == Location.WEST) {
-            sys.addFarmer(req.farmerName());
-            sys.addSchedule(a, req.date());
-            sys.addStock(a, req.quantity());
-
+            sys.addFarmer(farmer);
+            sys.addSchedule(a, ctx.date());
+            sys.addStock(a, ctx.quantity());
         } else if (cfg.location() == Location.EAST) {
-            sys.addFarmer(req.farmerName() + "-east");
-            sys.addSchedule(a, req.date());
-            sys.addStock(a, -req.quantity());
+            sys.addFarmer(farmer + "-east");
+            sys.addSchedule(a, ctx.date());
+            sys.addStock(a, -ctx.quantity());
         }
-
-        return true; //Always stop as final handler
+        return true; // final handler
     }
 }
 
@@ -227,15 +258,12 @@ final class ProcessPipeline {
         this.processes = processes;
     }
 
-    public void run(AppConfig cfg, FarmSystem sys, Request req) {
+    public void run(AppConfig cfg, FarmSystem sys, ProcessContext ctx) {
         for (Process p : processes) {
-            if (p.apply(cfg, sys, req)) {
-                return;
-            }
+            if (p.apply(cfg, sys, ctx)) return;
         }
     }
 }
-
 
 /*-----------------*/
 
@@ -251,12 +279,13 @@ final class App {
         this.pipeline = pipeline;
     }
 
+    //Future possibility to set other types of config
     public void setConfig(AppConfig newConfig) {
         this.config = newConfig;
     }
 
-    public void run(Request req) {
-        pipeline.run(config, system, req);
+    public void run(ProcessContext ctx) {
+        pipeline.run(config, system, ctx);
     }
 
     public void displayOutput() {
@@ -291,8 +320,8 @@ public class Main{
     ));
 
     App app = new App(system, config, pipeline);
-
-    app.run(new Request("Shiitake", "John", "2023-10-26", 10));
+    ProcessContext ctx = new ProcessContext(new Request("Sittake", "John", "2023-10-26", 10));
+    app.run(ctx);
     app.displayOutput();
 }}
 
